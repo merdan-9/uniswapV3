@@ -6,6 +6,7 @@ import {Position} from "./lib/Position.sol";
 
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IUniswapV3MintCallback} from "./interfaces/IUniswapV3MintCallback.sol";
+import {IUniswapV3SwapCallback} from "./interfaces/IUniswapV3SwapCallback.sol";
 
 
 import "forge-std/console.sol";
@@ -27,6 +28,15 @@ contract UniswapV3Pool {
         uint128 amount,
         uint256 amount0,
         uint256 amount1
+    );
+
+    event Swap(
+        address indexed sender,
+        address indexed recipient,
+        int256 amount0,
+        int256 amount1,
+        uint160 sqrtPriceX96,
+        int24 tick
     );
 
     int24 internal constant MIN_TICK = -887272;
@@ -115,6 +125,40 @@ contract UniswapV3Pool {
         
         emit Mint(msg.sender, owner, lowerTick, upperTick, amount, amount0, amount1);
 
+    }
+
+    function swap(address recipient, bytes calldata data) 
+        public
+        returns (int256 amount0, int256 amount1)
+    {
+        int24 nextTick = 85184;
+        uint160 nextPrice = 5604469350942327889444743441197;
+
+        amount0 = -0.008396714242162444 ether;
+        amount1 = 42 ether;
+
+        (slot0.sqrtPriceX96, slot0.tick) = (nextPrice, nextTick);
+
+        uint256 balance1Before = balance1();
+        IUniswapV3SwapCallback(msg.sender).uniswapV3SwapCallback(
+            amount0, 
+            amount1, 
+            data
+        );
+        if (balance1Before + uint256(amount1) > balance1()) {
+            revert Error_InsufficientInputAmount();
+        }
+
+        IERC20(token0).transfer(recipient, uint256(-amount0));
+
+        emit Swap(
+            msg.sender,
+            recipient,
+            amount0,
+            amount1,
+            slot0.sqrtPriceX96,
+            slot0.tick
+        );
     }
 
     function balance0() internal returns (uint256 balance) {
