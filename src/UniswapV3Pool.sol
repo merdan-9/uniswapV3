@@ -7,7 +7,14 @@ import {Position} from "./lib/Position.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IUniswapV3MintCallback} from "./interfaces/IUniswapV3MintCallback.sol";
 
+
+import "forge-std/console.sol";
+
 contract UniswapV3Pool {
+    using Tick for mapping(int24 => Tick.Info);
+    using Position for mapping(bytes32 => Position.Info);
+    using Position for Position.Info;
+
     error Error_InvalidTickRange();
     error Error_ZeroLiquidity();
     error Error_InsufficientInputAmount();
@@ -22,10 +29,6 @@ contract UniswapV3Pool {
         uint256 amount1
     );
 
-    using Tick for mapping(int24 => Tick.Info);
-    using Position for mapping(bytes32 => Position.Info);
-    using Position for Position.Info;
-
     int24 internal constant MIN_TICK = -887272;
     int24 internal constant MAX_TICK = 887272;
 
@@ -36,6 +39,13 @@ contract UniswapV3Pool {
         uint160 sqrtPriceX96;
         int24 tick;
     }
+
+    struct CallbackData {
+        address token0;
+        address token1;
+        address payer;
+    }
+
     Slot0 public slot0;
 
     uint128 public liquidity;
@@ -58,7 +68,7 @@ contract UniswapV3Pool {
         });
     }
 
-    function minting(address owner, int24 lowerTick, int24 upperTick, uint128 amount, bytes calldata data)
+    function mint(address owner, int24 lowerTick, int24 upperTick, uint128 amount, bytes calldata data)
         external
         returns (uint256 amount0, uint256 amount1)
     {
@@ -79,11 +89,13 @@ contract UniswapV3Pool {
             upperTick
         );
         position.update(amount);
+        
+
 
         amount0 = 0.998976618347425280 ether;
         amount1 = 5000 ether;
 
-        liquidity += amount;
+        liquidity += uint128(amount);
 
         uint256 balance0Before;
         uint256 balance1Before;
