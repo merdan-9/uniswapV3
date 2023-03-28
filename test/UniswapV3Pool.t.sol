@@ -122,6 +122,8 @@ contract UniswapV3PoolTest is Test {
 
         (int256 amount0Delta, int256 amount1Delta) = pool.swap(
             address(this),
+            false,
+            swapAmount,
             abi.encode(extra)
         );
 

@@ -6,6 +6,7 @@ import {Position} from "./lib/Position.sol";
 import {TickBitmap} from "./lib/TickBitmap.sol";
 import {Math} from "./lib/Math.sol";
 import {TickMath} from "./lib/TickMath.sol";
+import {SwapMath} from "./lib/SwapMath.sol";
 
 import {IERC20} from "./interfaces/IERC20.sol";
 import {IUniswapV3MintCallback} from "./interfaces/IUniswapV3MintCallback.sol";
@@ -40,6 +41,7 @@ contract UniswapV3Pool {
         int256 amount0,
         int256 amount1,
         uint160 sqrtPriceX96,
+        uint128 liquidity,
         int24 tick
     );
 
@@ -58,6 +60,21 @@ contract UniswapV3Pool {
         address token0;
         address token1;
         address payer;
+    }
+
+    struct SwapState {
+        uint256 amountSpecifiedRemaining;
+        uint256 amountCalculated;
+        uint160 sqrtPriceX96;
+        int24 tick;
+    }
+
+    struct StepState {
+        uint160 sqrtPriceStartX96;
+        int24 nextTick;
+        uint160 sqrtPriceNextX96;
+        uint256 amountIn;
+        uint256 amountOut;
     }
 
     Slot0 public slot0;
@@ -149,31 +166,81 @@ contract UniswapV3Pool {
 
     }
 
-    function swap(address recipient, bytes calldata data) 
+    function swap(address recipient, bool zeroForOne, uint256 amountSpecified ,bytes calldata data)
         public
         returns (int256 amount0, int256 amount1)
-    {
-        int24 nextTick = 85184;
-        uint160 nextPrice = 5604469350942327889444743441197;
+    {   
+        Slot0 memory slot0_ = slot0;
 
-        amount0 = -0.008396714242162444 ether;
-        amount1 = 42 ether;
+        SwapState memory state = SwapState({
+            amountSpecifiedRemaining: amountSpecified,
+            amountCalculated: 0,
+            sqrtPriceX96: slot0_.sqrtPriceX96,
+            tick: slot0_.tick
+        });
 
-        (slot0.sqrtPriceX96, slot0.tick) = (nextPrice, nextTick);
+        while (state.amountSpecifiedRemaining > 0) {
+            StepState memory step;
+            step.sqrtPriceStartX96 = state.sqrtPriceX96;
 
-        IERC20(token0).transfer(recipient, uint256(-amount0));
+            (step.nextTick, ) = tickBitmap.nextInitializedTickWithinOneWord(
+                state.tick,
+                1,
+                zeroForOne
+            );
 
-        uint256 balance1Before = balance1();
-        IUniswapV3SwapCallback(msg.sender).uniswapV3SwapCallback(
-            amount0, 
-            amount1, 
-            data
-        );
-        if (balance1Before + uint256(amount1) > balance1()) {
-            revert Error_InsufficientInputAmount();
+            step.sqrtPriceNextX96 = TickMath.getSqrtRatioAtTick(step.nextTick);
+
+            (state.sqrtPriceX96, step.amountIn, step.amountOut) = SwapMath
+                .computeSwapStep(
+                    state.sqrtPriceX96,
+                    step.sqrtPriceNextX96,
+                    liquidity,
+                    state.amountSpecifiedRemaining
+                );
+            
+            state.amountSpecifiedRemaining -= step.amountIn;
+            state.amountCalculated += step.amountOut;
+            state.tick = TickMath.getTickAtSqrtRatio(state.sqrtPriceX96);
         }
 
+        if (state.tick != slot0_.tick) {
+            (slot0.sqrtPriceX96, slot0.tick) = (state.sqrtPriceX96, state.tick);
+        }
+
+        (amount0, amount1) = zeroForOne
+            ? (
+                int256(amountSpecified - state.amountSpecifiedRemaining),
+                -int256(state.amountCalculated)
+            )
+            : (
+                -int256(state.amountCalculated),
+                int256(amountSpecified - state.amountSpecifiedRemaining)
+            );
         
+        if (zeroForOne) {
+            IERC20(token1).transfer(recipient, uint256(-amount1));
+
+            uint256 balance0Before = balance0();
+            IUniswapV3SwapCallback(msg.sender).uniswapV3SwapCallback(
+                amount0,
+                amount1,
+                data
+            );
+            if (balance0Before + uint256(amount0) > balance0())
+                revert Error_InsufficientInputAmount();
+        } else {
+            IERC20(token0).transfer(recipient, uint256(-amount0));
+
+            uint256 balance1Before = balance1();
+            IUniswapV3SwapCallback(msg.sender).uniswapV3SwapCallback(
+                amount0,
+                amount1,
+                data
+            );
+            if (balance1Before + uint256(amount1) > balance1())
+                revert Error_InsufficientInputAmount();
+        }       
 
         emit Swap(
             msg.sender,
@@ -181,6 +248,7 @@ contract UniswapV3Pool {
             amount0,
             amount1,
             slot0.sqrtPriceX96,
+            liquidity,
             slot0.tick
         );
     }
