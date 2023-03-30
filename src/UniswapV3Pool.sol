@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.14;
 
+import {LiquidityMath} from "./lib/LiquidityMath.sol";
 import {Tick} from "./lib/Tick.sol";
 import {Position} from "./lib/Position.sol";
 import {TickBitmap} from "./lib/TickBitmap.sol";
@@ -132,19 +133,32 @@ contract UniswapV3Pool {
         
         Slot0 memory slot0_ = slot0;
 
-        amount0 = Math.calcAmount0Delta(
-            slot0_.sqrtPriceX96,
-            TickMath.getSqrtRatioAtTick(upperTick),
-            amount
-        );
+        if (slot0_.tick < lowerTick) {
+            amount0 = Math.calcAmount0Delta(
+                TickMath.getSqrtRatioAtTick(lowerTick),
+                TickMath.getSqrtRatioAtTick(upperTick),
+                amount
+            );
+        } else if (slot0_.tick < upperTick) {
+            amount0 = Math.calcAmount0Delta(
+                slot0_.sqrtPriceX96,
+                TickMath.getSqrtRatioAtTick(upperTick),
+                amount
+            );
+            amount1 = Math.calcAmount0Delta(
+                slot0_.sqrtPriceX96,
+                TickMath.getSqrtRatioAtTick(lowerTick),
+                amount
+            );
+            liquidity = LiquidityMath.addLiquidity(liquidity, int128(amount));
+        } else {
+            amount1 = Math.calcAmount0Delta(
+                TickMath.getSqrtRatioAtTick(lowerTick),
+                TickMath.getSqrtRatioAtTick(upperTick),
+                amount
+            );
+        }
 
-        amount1 = Math.calcAmount1Delta(
-            slot0_.sqrtPriceX96,
-            TickMath.getSqrtRatioAtTick(lowerTick),
-            amount
-        );
-
-        liquidity += uint128(amount);
 
         uint256 balance0Before;
         uint256 balance1Before;
